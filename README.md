@@ -31,7 +31,7 @@ jobs:
 | `project` | yes | | Project name |
 | `image` | no | | Deploy this existing image instead of building (public or hero registry) |
 | `working-directory` | no | `.` | Directory with `hero.toml` |
-| `heroctl-version` | no | `v1.3.0` | heroctl release |
+| `heroctl-version` | no | `v1.3.2` | heroctl release |
 
 The action first runs `heroctl validate` (problems in `hero.toml` show as annotations), then deploys and writes a summary to the job page.
 
