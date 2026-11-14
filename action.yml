@@ -46,6 +46,19 @@ runs:
         curl -fsSL "https://codeberg.org/InfraHeroes/heroctl/releases/download/${VERSION}/${asset}" -o "$RUNNER_TEMP/heroctl-bin/heroctl"
         chmod +x "$RUNNER_TEMP/heroctl-bin/heroctl"
         echo "$RUNNER_TEMP/heroctl-bin" >> "$GITHUB_PATH"
+    - name: Validate hero.toml
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        # Warnings (for example a port under [app]) show up as annotations.
+        heroctl validate 2>&1 | while IFS= read -r line; do
+          case "$line" in
+            Warning:*) echo "::warning title=hero.toml::${line#Warning: }" ;;
+            *) echo "$line" ;;
+          esac
+        done
+        exit "${PIPESTATUS[0]}"
     - name: Deploy
       id: deploy
       shell: bash
@@ -59,6 +72,16 @@ runs:
         echo "::add-mask::$HERO_TOKEN"
         args=(deploy --project "$PROJECT" --yes --token "$HERO_TOKEN")
         if [ -n "$IMAGE" ]; then args+=(--image "$IMAGE"); fi
-        heroctl "${args[@]}" | tee "$RUNNER_TEMP/deploy.log"
+        if ! heroctl "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/deploy.log"; then
+          echo "::error title=Deploy failed::heroctl deploy failed, see the output above. After a timeout, check port and health_path in hero.toml and read the app output with: heroctl logs <app> --project $PROJECT"
+          exit 1
+        fi
         url=$(sed -n 's/^URL: //p' "$RUNNER_TEMP/deploy.log" | tail -1)
         echo "url=$url" >> "$GITHUB_OUTPUT"
+        {
+          echo "### Deployed to Infra-Heroes"
+          echo ""
+          echo "- Project: \`$PROJECT\`"
+          [ -n "$IMAGE" ] && echo "- Image: \`$IMAGE\`"
+          [ -n "$url" ] && echo "- URL: $url"
+        } >> "$GITHUB_STEP_SUMMARY"

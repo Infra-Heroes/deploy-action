@@ -33,6 +33,8 @@ jobs:
 | `working-directory` | no | `.` | Directory with `hero.toml` |
 | `heroctl-version` | no | `v1.3.0` | heroctl release |
 
+The action first runs `heroctl validate` (problems in `hero.toml` show as annotations), then deploys and writes a summary to the job page.
+
 Output `url`: the public URL of the app.
 
 Without `image` the action builds the Docker image from your repository on the runner and pushes it to the Infra-Heroes registry; Docker is preinstalled on `ubuntu-latest`.
