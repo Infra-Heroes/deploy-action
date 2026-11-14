@@ -1,0 +1,64 @@
+name: "Deploy to Infra-Heroes"
+description: "Deploy an app to the Infra-Heroes platform with heroctl: builds and pushes the image from your repository, or deploys an existing one."
+branding:
+  icon: "upload-cloud"
+  color: "blue"
+inputs:
+  token:
+    description: "Deploy token (heroctl tokens create --scope deploy). Store it as a secret."
+    required: true
+  project:
+    description: "Name of the Infra-Heroes project to deploy to."
+    required: true
+  image:
+    description: "Deploy this existing image instead of building one from the repository. Must be public or in the hero registry."
+    required: false
+    default: ""
+  working-directory:
+    description: "Directory that holds hero.toml."
+    required: false
+    default: "."
+  heroctl-version:
+    description: "heroctl release to use."
+    required: false
+    default: "v1.3.0"
+outputs:
+  url:
+    description: "Public URL of the deployed app."
+    value: ${{ steps.deploy.outputs.url }}
+runs:
+  using: "composite"
+  steps:
+    - name: Install heroctl
+      shell: bash
+      env:
+        VERSION: ${{ inputs.heroctl-version }}
+      run: |
+        set -euo pipefail
+        case "$(uname -s)-$(uname -m)" in
+          Linux-x86_64) asset=heroctl-linux-amd64 ;;
+          Linux-aarch64|Linux-arm64) asset=heroctl-linux-arm64 ;;
+          Darwin-arm64) asset=heroctl-darwin-arm64 ;;
+          Darwin-x86_64) asset=heroctl-darwin-amd64 ;;
+          *) echo "::error::Unsupported runner $(uname -s) $(uname -m)"; exit 1 ;;
+        esac
+        mkdir -p "$RUNNER_TEMP/heroctl-bin"
+        curl -fsSL "https://codeberg.org/InfraHeroes/heroctl/releases/download/${VERSION}/${asset}" -o "$RUNNER_TEMP/heroctl-bin/heroctl"
+        chmod +x "$RUNNER_TEMP/heroctl-bin/heroctl"
+        echo "$RUNNER_TEMP/heroctl-bin" >> "$GITHUB_PATH"
+    - name: Deploy
+      id: deploy
+      shell: bash
+      working-directory: ${{ inputs.working-directory }}
+      env:
+        HERO_TOKEN: ${{ inputs.token }}
+        PROJECT: ${{ inputs.project }}
+        IMAGE: ${{ inputs.image }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::$HERO_TOKEN"
+        args=(deploy --project "$PROJECT" --yes --token "$HERO_TOKEN")
+        if [ -n "$IMAGE" ]; then args+=(--image "$IMAGE"); fi
+        heroctl "${args[@]}" | tee "$RUNNER_TEMP/deploy.log"
+        url=$(sed -n 's/^URL: //p' "$RUNNER_TEMP/deploy.log" | tail -1)
+        echo "url=$url" >> "$GITHUB_OUTPUT"
