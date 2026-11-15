@@ -21,7 +21,7 @@ inputs:
   heroctl-version:
     description: "heroctl release to use."
     required: false
-    default: "v1.3.2"
+    default: "v1.4.0"
 outputs:
   url:
     description: "Public URL of the deployed app."
