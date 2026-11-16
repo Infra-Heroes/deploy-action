@@ -33,7 +33,7 @@ jobs:
 | `working-directory` | no | `.` | Directory with `hero.toml` |
 | `preview` | no | `false` | Deploy pull requests as their own app, see below |
 | `github-token` | no | `github.token` | Comments the preview URL on the pull request (only with `preview`) |
-| `heroctl-version` | no | `v1.8.0` | heroctl release |
+| `heroctl-version` | no | `v1.9.0` | heroctl release |
 
 The action first runs `heroctl validate` (problems in `hero.toml` show as annotations), then deploys and writes a summary to the job page.
 
