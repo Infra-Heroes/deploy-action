@@ -18,10 +18,18 @@ inputs:
     description: "Directory that holds hero.toml."
     required: false
     default: "."
+  preview:
+    description: "Run on pull requests: deploy every PR as its own app <app>-pr-<number> and comment its URL, and delete it again when the PR is closed. Use it with the pull_request event (types opened, synchronize, reopened, closed)."
+    required: false
+    default: "false"
+  github-token:
+    description: "Token used to comment on the pull request (needs pull-requests: write). Only used with preview."
+    required: false
+    default: ${{ github.token }}
   heroctl-version:
     description: "heroctl release to use."
     required: false
-    default: "v1.4.0"
+    default: "v1.6.0"
 outputs:
   url:
     description: "Public URL of the deployed app."
@@ -29,7 +37,39 @@ outputs:
 runs:
   using: "composite"
   steps:
+    - name: Decide what to do
+      id: ctx
+      shell: bash
+      env:
+        PREVIEW: ${{ inputs.preview }}
+        EVENT: ${{ github.event_name }}
+        PR_ACTION: ${{ github.event.action }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+        THIS_REPO: ${{ github.repository }}
+      run: |
+        set -euo pipefail
+        mode=deploy; name=""
+        if [ "$PREVIEW" = "true" ]; then
+          if [ "$EVENT" != "pull_request" ]; then
+            echo "::error title=preview::preview: true needs the pull_request event (this run is $EVENT). Run the action without preview for pushes to main."
+            exit 1
+          fi
+          name="pr-${PR_NUMBER}"
+          if [ "$PR_ACTION" = "closed" ]; then
+            mode=cleanup
+          elif [ "$HEAD_REPO" != "$THIS_REPO" ]; then
+            # A fork's code must not run with this repository's deploy token.
+            echo "::notice title=preview::Skipped: this pull request comes from a fork, and a fork's code does not get the deploy token."
+            mode=skip
+          else
+            mode=preview
+          fi
+        fi
+        echo "mode=$mode" >> "$GITHUB_OUTPUT"
+        echo "name=$name" >> "$GITHUB_OUTPUT"
     - name: Install heroctl
+      if: steps.ctx.outputs.mode != 'skip'
       shell: bash
       env:
         VERSION: ${{ inputs.heroctl-version }}
@@ -47,6 +87,7 @@ runs:
         chmod +x "$RUNNER_TEMP/heroctl-bin/heroctl"
         echo "$RUNNER_TEMP/heroctl-bin" >> "$GITHUB_PATH"
     - name: Validate hero.toml
+      if: steps.ctx.outputs.mode == 'deploy' || steps.ctx.outputs.mode == 'preview'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       run: |
@@ -61,17 +102,21 @@ runs:
         exit "${PIPESTATUS[0]}"
     - name: Deploy
       id: deploy
+      if: steps.ctx.outputs.mode == 'deploy' || steps.ctx.outputs.mode == 'preview'
       shell: bash
       working-directory: ${{ inputs.working-directory }}
       env:
         HERO_TOKEN: ${{ inputs.token }}
         PROJECT: ${{ inputs.project }}
         IMAGE: ${{ inputs.image }}
+        PREVIEW_NAME: ${{ steps.ctx.outputs.name }}
+        MODE: ${{ steps.ctx.outputs.mode }}
       run: |
         set -euo pipefail
         echo "::add-mask::$HERO_TOKEN"
         args=(deploy --project "$PROJECT" --yes --token "$HERO_TOKEN")
         if [ -n "$IMAGE" ]; then args+=(--image "$IMAGE"); fi
+        if [ "$MODE" = "preview" ]; then args+=(--preview "$PREVIEW_NAME"); fi
         if ! heroctl "${args[@]}" 2>&1 | tee "$RUNNER_TEMP/deploy.log"; then
           echo "::error title=Deploy failed::heroctl deploy failed, see the output above. After a timeout, check port and health_path in hero.toml and read the app output with: heroctl logs <app> --project $PROJECT"
           exit 1
@@ -79,9 +124,58 @@ runs:
         url=$(sed -n 's/^URL: //p' "$RUNNER_TEMP/deploy.log" | tail -1)
         echo "url=$url" >> "$GITHUB_OUTPUT"
         {
-          echo "### Deployed to Infra-Heroes"
+          if [ "$MODE" = "preview" ]; then echo "### Preview on Infra-Heroes"; else echo "### Deployed to Infra-Heroes"; fi
           echo ""
           echo "- Project: \`$PROJECT\`"
           [ -n "$IMAGE" ] && echo "- Image: \`$IMAGE\`"
           [ -n "$url" ] && echo "- URL: $url"
         } >> "$GITHUB_STEP_SUMMARY"
+    - name: Comment the preview on the pull request
+      if: steps.ctx.outputs.mode == 'preview' && steps.deploy.outputs.url != ''
+      shell: bash
+      env:
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        URL: ${{ steps.deploy.outputs.url }}
+        SHA: ${{ github.event.pull_request.head.sha }}
+      run: |
+        set -euo pipefail
+        body=$(printf '<!-- infra-heroes-preview -->\n**Preview on Infra-Heroes**\n\n%s\n\nUpdated for %s. It is deleted when this pull request is closed.' "$URL" "${SHA:0:7}")
+        id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.body | startswith("<!-- infra-heroes-preview -->"))][0].id // empty' || true)
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body="$body" >/dev/null
+        else
+          gh api -X POST "repos/$REPO/issues/$PR_NUMBER/comments" -f body="$body" >/dev/null
+        fi || echo "::warning title=preview::Could not comment on the pull request. Give the job pull-requests: write."
+    - name: Delete the preview
+      if: steps.ctx.outputs.mode == 'cleanup'
+      shell: bash
+      env:
+        HERO_TOKEN: ${{ inputs.token }}
+        PROJECT: ${{ inputs.project }}
+        PREVIEW_NAME: ${{ steps.ctx.outputs.name }}
+        GH_TOKEN: ${{ inputs.github-token }}
+        REPO: ${{ github.repository }}
+        PR_NUMBER: ${{ github.event.pull_request.number }}
+        BASE_REF: ${{ github.event.pull_request.base.ref }}
+        WORKDIR: ${{ inputs.working-directory }}
+      run: |
+        set -euo pipefail
+        echo "::add-mask::$HERO_TOKEN"
+        cd "$WORKDIR" 2>/dev/null || true
+        # A closed pull request often cannot be checked out any more (its merge ref is
+        # gone), so hero.toml, which names the app, is read from the base branch.
+        if [ ! -f hero.toml ]; then
+          mkdir -p "$RUNNER_TEMP/cleanup"
+          path="${WORKDIR#./}"; path="${path#.}"; path="${path:+$path/}hero.toml"
+          gh api "repos/$REPO/contents/$path?ref=$BASE_REF" -H "Accept: application/vnd.github.raw" > "$RUNNER_TEMP/cleanup/hero.toml" \
+            || { echo "::error title=preview::Could not read hero.toml from $BASE_REF to find the preview app. Give the job contents: read."; exit 1; }
+          cd "$RUNNER_TEMP/cleanup"
+        fi
+        heroctl preview delete "$PREVIEW_NAME" --project "$PROJECT" --token "$HERO_TOKEN"
+        id=$(gh api "repos/$REPO/issues/$PR_NUMBER/comments" --paginate --jq '[.[] | select(.body | startswith("<!-- infra-heroes-preview -->"))][0].id // empty' 2>/dev/null || true)
+        if [ -n "$id" ]; then
+          gh api -X PATCH "repos/$REPO/issues/comments/$id" -f body=$'<!-- infra-heroes-preview -->\n**Preview on Infra-Heroes** was deleted with this pull request.' >/dev/null || true
+        fi
+        echo "### Preview $PREVIEW_NAME deleted" >> "$GITHUB_STEP_SUMMARY"
