@@ -1,6 +1,6 @@
 # Deploy to Infra-Heroes
 
-Deploys your app to [Infra-Heroes](https://infra-heroes.de) from a GitHub workflow with [heroctl](https://codeberg.org/InfraHeroes/heroctl).
+Deploys your app to [Infra-Heroes](https://infra-heroes.de) from a GitHub workflow with [heroctl](https://infra-heroes.de/docs#commands).
 
 1. Create a deploy token and store it as the repository secret `HERO_TOKEN`:
    ```bash
@@ -33,7 +33,7 @@ jobs:
 | `working-directory` | no | `.` | Directory with `hero.toml` |
 | `preview` | no | `false` | Deploy pull requests as their own app, see below |
 | `github-token` | no | `github.token` | Comments the preview URL on the pull request (only with `preview`) |
-| `heroctl-version` | no | `v1.9.0` | heroctl release |
+| `heroctl-version` | no | `v1.14.0` | heroctl release |
 
 The action first runs `heroctl validate` (problems in `hero.toml` show as annotations), then deploys and writes a summary to the job page.
 

@@ -29,7 +29,7 @@ inputs:
   heroctl-version:
     description: "heroctl release to use."
     required: false
-    default: "v1.9.0"
+    default: "v1.14.0"
 outputs:
   url:
     description: "Public URL of the deployed app."
@@ -83,7 +83,7 @@ runs:
           *) echo "::error::Unsupported runner $(uname -s) $(uname -m)"; exit 1 ;;
         esac
         mkdir -p "$RUNNER_TEMP/heroctl-bin"
-        curl -fsSL "https://codeberg.org/InfraHeroes/heroctl/releases/download/${VERSION}/${asset}" -o "$RUNNER_TEMP/heroctl-bin/heroctl"
+        curl -fsSL "https://infra-heroes.de/downloads/heroctl/${VERSION}/${asset}" -o "$RUNNER_TEMP/heroctl-bin/heroctl"
         chmod +x "$RUNNER_TEMP/heroctl-bin/heroctl"
         echo "$RUNNER_TEMP/heroctl-bin" >> "$GITHUB_PATH"
     - name: Validate hero.toml
